@@ -20,6 +20,7 @@ static_assert(__cplusplus >= 201703L, "C++17 or newer standard is required.");
 #include <cstring>
 #include <cerrno>
 #include <variant>
+#include <map>
 
 namespace stdfcpp
 {
@@ -243,9 +244,9 @@ private:
 
 
 #pragma region Record Parser
-using GdrData = std::vector<std::variant<std::monostate, uint8_t, uint16_t, uint32_t, int8_t,
-    int16_t, int32_t, float, double, std::string, std::vector<std::byte>, std::vector<bool>,
-    Nibble>>;
+using GdrData = std::vector<std::variant<std::monostate, uint8_t, uint16_t,
+        uint32_t, int8_t, int16_t, int32_t, float, double, std::string,
+        std::vector<std::byte>, std::vector<bool>, Nibble>>;
 
 class RecordParsingSettings
 {
@@ -283,25 +284,33 @@ public:
         return _strictBitVectors;
     }
 
-    inline void set_big_endian(bool set) noexcept
+    [[deprecated("Setting endianness is not recommended")]]
+    inline RecordParsingSettings& set_big_endian(bool set) noexcept
     {
         _bigEndian = set;
+        return *this;
     }
 
-    inline void set_vax_float(bool set) noexcept
+    [[deprecated("Setting float type is not recommended")]]
+    inline RecordParsingSettings& set_vax_float(bool set) noexcept
     {
         _vaxFloat = set;
+        return *this;
     }
 
-    inline void set_strict_nibbles(bool set) noexcept
+    inline RecordParsingSettings& set_strict_nibbles(bool set) noexcept
     {
         _strictNibbles = set;
+        return *this;
     }
 
-    inline void set_strict_bit_vectors(bool set) noexcept
+    inline RecordParsingSettings& set_strict_bit_vectors(bool set) noexcept
     {
         _strictBitVectors = set;
+        return *this;
     }
+
+    friend class StdfReader;
 };
 
 class RecordParser
@@ -846,7 +855,7 @@ public:
     {
         bool evenNibbleCount = len % 2 == 0;
         uint16_t byteCount = evenNibbleCount ? len / 2 : (len + 1) / 2;
-        std::vector<std::byte> byteVector = get_byte_vector(name, len);
+        std::vector<std::byte> byteVector = get_byte_vector(name, byteCount);
         if (_settings.get_strict_nibbles() && !evenNibbleCount)
         {
             uint8_t lastByte = std::to_integer<uint8_t>(byteVector.back());
@@ -2567,8 +2576,9 @@ class Ptr
         NO_HI_LIMIT      = (1 << 7)
     };
 
-    inline explicit Ptr(RecordParser p)
-        : _testNum{p.get_uint32("TEST_NUM")}
+    inline explicit Ptr(RecordParser p, uint32_t testNum, const Ptr* def,
+        std::map<uint32_t, Ptr>& defs)
+        : _testNum{testNum}
         , _headNum{p.get_uint8("HEAD_NUM")}
         , _siteNum{p.get_uint8("SITE_NUM")}
         , _testFlg{p.get_uint8("TEST_FLG")}
@@ -2576,31 +2586,62 @@ class Ptr
         , _result{p.get_float("RESULT")}
         , _testTxt{p.get_string("TEST_TXT")}
         , _alarmId{p.get_string("ALARM_ID")}
-        , _optFlag{p.get_uint8_cond("OPT_FLAG", p.get_bytes_left() > 0, UINT8_MAX)}
-        , _resScal{p.get_int8_cond("RES_SCAL", (_optFlag & INVALID_RES_SCAL) == 0, 0)}
+        , _optFlag{p.get_uint8_cond(
+            "OPT_FLAG", def == nullptr || p.get_bytes_left() > 0, UINT8_MAX)}
+        , _resScal{p.get_int8_cond(
+            "RES_SCAL", def == nullptr || (_optFlag & INVALID_RES_SCAL) == 0, 0)}
         , _llmScal{p.get_int8_cond(
-            "LLM_SCAL", (_optFlag & (INVALID_LO_LIMIT | NO_LO_LIMIT)) == 0, 0)}
+            "LLM_SCAL", def == nullptr || (_optFlag & (INVALID_LO_LIMIT | NO_LO_LIMIT)) == 0, 0)}
         , _hlmScal{p.get_int8_cond(
-            "HLM_SCAL", (_optFlag & (INVALID_HI_LIMIT | NO_HI_LIMIT)) == 0, 0)}
+            "HLM_SCAL", def == nullptr || (_optFlag & (INVALID_HI_LIMIT | NO_HI_LIMIT)) == 0, 0)}
         , _loLimit{p.get_float_cond(
-            "LO_LIMIT", (_optFlag & (INVALID_LO_LIMIT | NO_LO_LIMIT)) == 0, 0)}
+            "LO_LIMIT", def == nullptr || (_optFlag & (INVALID_LO_LIMIT | NO_LO_LIMIT)) == 0, 0)}
         , _hiLimit{p.get_float_cond(
-            "HI_LIMIT", (_optFlag & (INVALID_HI_LIMIT | NO_HI_LIMIT)) == 0, 0)}
-        , _units{p.get_string_cond("UNITS", p.get_bytes_left() > 0, {})}
-        , _cResfmt{p.get_string_cond("C_RESFMT", p.get_bytes_left() > 0, {})}
-        , _cLlmfmt{p.get_string_cond("C_LLMFMT", p.get_bytes_left() > 0, {})}
-        , _cHlmfmt{p.get_string_cond("C_HLMFMT", p.get_bytes_left() > 0, {})}
-        , _loSpec{p.get_float_cond("LO_SPEC", (_optFlag & NO_LO_SPEC_LIMIT) == 0, 0)}
-        , _hiSpec{p.get_float_cond("HI_SPEC", (_optFlag & NO_HI_SPEC_LIMIT) == 0, 0)}
+            "HI_LIMIT", def == nullptr || (_optFlag & (INVALID_HI_LIMIT | NO_HI_LIMIT)) == 0, 0)}
+        , _units{p.get_string_cond(
+            "UNITS", def == nullptr || p.get_bytes_left() > 0, {})}
+        , _cResfmt{p.get_string_cond(
+            "C_RESFMT", def == nullptr || p.get_bytes_left() > 0, {})}
+        , _cLlmfmt{p.get_string_cond(
+            "C_LLMFMT", def == nullptr || p.get_bytes_left() > 0, {})}
+        , _cHlmfmt{p.get_string_cond(
+            "C_HLMFMT", def == nullptr || p.get_bytes_left() > 0, {})}
+        , _loSpec{p.get_float_cond(
+            "LO_SPEC", def == nullptr || (_optFlag & NO_LO_SPEC_LIMIT) == 0, 0)}
+        , _hiSpec{p.get_float_cond(
+            "HI_SPEC", def == nullptr || (_optFlag & NO_HI_SPEC_LIMIT) == 0, 0)}
     {
         p.throw_if_leftover_bytes();
+        if (def == nullptr)
+            defs[testNum] = *this;
+    }
+
+    inline static const Ptr* get_def_or_nullptr(uint32_t testNum,
+        const std::map<uint32_t, Ptr>& defs)
+    {
+        auto found = defs.find(testNum);
+        if (found == defs.end())
+            return nullptr;
+        return &found->second;
+    }
+
+    inline explicit Ptr(uint32_t testNum, std::map<uint32_t, Ptr>& defs,
+        RecordParser p)
+        : Ptr{std::move(p), testNum, get_def_or_nullptr(testNum, defs), defs}
+    {
+    }
+
+    inline explicit Ptr(RecordParser p, std::map<uint32_t, Ptr>& defs)
+        : Ptr{p.get_uint32("TEST_NUM"), defs, std::move(p)}
+    {
     }
 
 public:
     inline Ptr() = delete;
 
-    inline explicit Ptr(const RecordParsingSettings& settings, const std::byte* b, uint16_t len)
-        : Ptr{RecordParser{settings, b, len}}
+    inline explicit Ptr(const RecordParsingSettings& settings,
+        const std::byte* b, uint16_t len, std::map<uint32_t, Ptr>& defs)
+        : Ptr{RecordParser{settings, b, len}, defs}
     {
     }
     
@@ -3290,8 +3331,8 @@ class StdfReader
     bool _isUnread;
     RecordParsingSettings _settings;
     RecordHeader _header;  // header for record to be read
-    std::function<void(const RecordParsingSettings&, const RecordHeader&, const std::byte*)>
-        _unknownRecordHandler;
+    std::function<void(const RecordParsingSettings&, const RecordHeader&,
+        const std::byte*)> _unknownRecordHandler;
     std::function<void(const Far&)> _farHandler;
     std::function<void(const Atr&)> _atrHandler;
     std::function<void(const Mir&)> _mirHandler;
@@ -3317,6 +3358,7 @@ class StdfReader
     std::function<void(const Eps&)> _epsHandler;
     std::function<void(const Gdr&)> _gdrHandler;
     std::function<void(const Dtr&)> _dtrHandler;
+    std::map<uint32_t, Ptr> _ptrDefaults;
 
     inline void read_exact(uint16_t bytesNeeded)
     {
@@ -3372,8 +3414,8 @@ class StdfReader
     {
         Far far{_settings, _b.data(), _header.get_rec_len()};
         uint8_t cpuType = far.get_cpu_type();
-        _settings.set_big_endian(cpuType == 1);
-        _settings.set_vax_float(cpuType == 0);
+        _settings._bigEndian = cpuType == 1;
+        _settings._vaxFloat = cpuType == 0;
         if (_farHandler)
             _farHandler(far);
     }
@@ -3483,7 +3525,7 @@ class StdfReader
     inline void make_ptr()
     {
         if (_ptrHandler)
-            _ptrHandler(Ptr{_settings, _b.data(), _header.get_rec_len()});
+            _ptrHandler(Ptr{_settings, _b.data(), _header.get_rec_len(), _ptrDefaults});
     }
 
     inline void make_mpr()
@@ -3528,7 +3570,7 @@ class StdfReader
         if (_isUnread)
         {
             _isUnread = false;
-            _settings.set_big_endian(guess_if_big_endian());
+            _settings._bigEndian = guess_if_big_endian();
         }
         _header = RecordHeader(_settings, _b.data(), 4);
     }
@@ -3624,6 +3666,7 @@ public:
         , _epsHandler{}
         , _gdrHandler{}
         , _dtrHandler{}
+        , _ptrDefaults{}
     {
     }
 
